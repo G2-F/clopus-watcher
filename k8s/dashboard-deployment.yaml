@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: dashboard
-          image: ghcr.io/kubeden/clopus-watcher-dashboard:latest
+          image: ghcr.io/kubeden/clopus-watcher-dashboard:v0.1
           imagePullPolicy: Always
           ports:
             - containerPort: 8080

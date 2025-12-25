@@ -18,7 +18,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: watcher
-              image: ghcr.io/kubeden/clopus-watcher:latest
+              image: ghcr.io/kubeden/clopus-watcher:v0.1
               imagePullPolicy: Always
               env:
                 - name: TARGET_NAMESPACE
