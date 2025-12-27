@@ -11,7 +11,6 @@ import (
 )
 
 func main() {
-	// Get config from environment
 	sqlitePath := os.Getenv("SQLITE_PATH")
 	if sqlitePath == "" {
 		sqlitePath = "/data/watcher.db"
@@ -27,15 +26,27 @@ func main() {
 		logPath = "/data/watcher.log"
 	}
 
-	// Initialize database
 	database, err := db.New(sqlitePath)
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
 	defer database.Close()
 
-	// Parse templates - must parse all together so they can reference each other
-	tmpl, err := template.ParseGlob("templates/*.html")
+	// Template functions
+	funcMap := template.FuncMap{
+		"dict": func(values ...interface{}) map[string]interface{} {
+			m := make(map[string]interface{})
+			for i := 0; i < len(values); i += 2 {
+				if i+1 < len(values) {
+					m[values[i].(string)] = values[i+1]
+				}
+			}
+			return m
+		},
+	}
+
+	// Parse all templates together
+	tmpl, err := template.New("").Funcs(funcMap).ParseGlob("templates/*.html")
 	if err != nil {
 		log.Fatalf("Failed to parse templates: %v", err)
 	}
@@ -45,15 +56,23 @@ func main() {
 		log.Fatalf("Failed to parse partials: %v", err)
 	}
 
-	partials := tmpl
+	h := handlers.New(database, tmpl, logPath)
 
-	// Create handler
-	h := handlers.New(database, tmpl, partials, logPath)
-
-	// Routes
+	// Page routes
 	http.HandleFunc("/", h.Index)
-	http.HandleFunc("/fixes", h.Fixes)
-	http.HandleFunc("/logs", h.Logs)
+
+	// HTMX partial routes
+	http.HandleFunc("/partials/runs", h.RunsList)
+	http.HandleFunc("/partials/run", h.RunDetail)
+	http.HandleFunc("/partials/stats", h.Stats)
+	http.HandleFunc("/partials/log", h.LiveLog)
+
+	// API routes
+	http.HandleFunc("/api/namespaces", h.APINamespaces)
+	http.HandleFunc("/api/runs", h.APIRuns)
+	http.HandleFunc("/api/run", h.APIRun)
+
+	// Health check
 	http.HandleFunc("/health", h.Health)
 
 	log.Printf("Dashboard starting on port %s", port)

@@ -22,42 +22,43 @@
         }
     </script>
     <style>
-        .terminal-scroll::-webkit-scrollbar { width: 6px; }
-        .terminal-scroll::-webkit-scrollbar-track { background: transparent; }
-        .terminal-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
     </style>
 </head>
 <body class="bg-neutral-950 text-white min-h-screen font-sans">
     <!-- Top Bar -->
     <header class="fixed top-0 left-0 right-0 h-14 bg-neutral-900 border-b border-neutral-800 z-50">
-        <div class="h-full px-4 md:px-6 flex items-center justify-between">
-            <span class="font-semibold text-base md:text-lg">Clopus Watcher</span>
-            <div class="flex items-center gap-3 md:gap-6">
-                <div class="hidden sm:flex items-center gap-3 md:gap-4 text-sm">
-                    <div class="flex items-center gap-2">
-                        <span class="text-neutral-500">Events</span>
-                        <span class="font-mono font-medium">{{.Total}}</span>
-                    </div>
-                    <div class="w-px h-4 bg-neutral-700"></div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-emerald-500">Fixed</span>
-                        <span class="font-mono font-medium">{{.Success}}</span>
-                    </div>
-                    <div class="w-px h-4 bg-neutral-700"></div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-red-500">Failed</span>
-                        <span class="font-mono font-medium">{{.Failed}}</span>
-                    </div>
+        <div class="h-full px-4 flex items-center justify-between">
+            <span class="font-semibold text-lg">Clopus Watcher</span>
+            <div class="flex items-center gap-4">
+                <!-- Namespace Selector -->
+                <select id="ns-select"
+                        class="bg-neutral-800 border border-neutral-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-neutral-600"
+                        onchange="window.location.href='/?ns=' + this.value">
+                    {{if not .Namespaces}}
+                    <option value="">No namespaces yet</option>
+                    {{else}}
+                    {{range .Namespaces}}
+                    <option value="{{.Namespace}}" {{if eq $.CurrentNS .Namespace}}selected{{end}}>{{.Namespace}}</option>
+                    {{end}}
+                    {{end}}
+                </select>
+                <!-- Stats -->
+                {{if .Stats}}
+                <div class="hidden sm:flex items-center gap-3 text-sm">
+                    <span class="text-neutral-500">Runs</span>
+                    <span class="font-mono">{{.Stats.RunCount}}</span>
+                    <span class="text-neutral-600">|</span>
+                    <span class="text-emerald-500">{{.Stats.OkCount}} ok</span>
+                    <span class="text-neutral-600">|</span>
+                    <span class="text-amber-500">{{.Stats.FixedCount}} fixed</span>
+                    <span class="text-neutral-600">|</span>
+                    <span class="text-red-500">{{.Stats.FailedCount}} failed</span>
                 </div>
-                <!-- Mobile stats -->
-                <div class="flex sm:hidden items-center gap-2 text-xs">
-                    <span class="font-mono">{{.Total}}</span>
-                    <span class="text-neutral-600">/</span>
-                    <span class="font-mono text-emerald-500">{{.Success}}</span>
-                    <span class="text-neutral-600">/</span>
-                    <span class="font-mono text-red-500">{{.Failed}}</span>
-                </div>
-                <div class="flex items-center gap-2 px-2 md:px-3 py-1 md:py-1.5 bg-emerald-500/10 rounded-full">
+                {{end}}
+                <div class="flex items-center gap-2 px-2 py-1 bg-emerald-500/10 rounded-full">
                     <div class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
                     <span class="text-emerald-500 text-xs font-medium hidden md:inline">Active</span>
                 </div>
@@ -65,44 +66,74 @@
         </div>
     </header>
 
-    <!-- Main Content -->
-    <main class="pt-14 flex flex-col lg:flex-row h-screen">
-        <!-- Terminal Panel -->
-        <div class="flex-1 flex flex-col border-b lg:border-b-0 lg:border-r border-neutral-800 min-h-0 h-[50vh] lg:h-auto">
-            <div class="px-4 py-3 border-b border-neutral-800 flex items-center gap-2">
-                <svg class="w-4 h-4 text-neutral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-                </svg>
-                <span class="text-sm text-neutral-400">Agent Terminal</span>
+    <!-- Main Layout -->
+    <div class="pt-14 flex h-screen">
+        <!-- Runs Sidebar -->
+        <aside class="w-64 lg:w-72 border-r border-neutral-800 flex flex-col bg-neutral-900">
+            <div class="p-3 border-b border-neutral-800">
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500">Runs</h2>
             </div>
-            <div id="log-container"
-                 class="flex-1 p-4 font-mono text-xs md:text-sm text-neutral-300 overflow-y-auto terminal-scroll bg-neutral-950 leading-relaxed"
-                 hx-get="/logs"
-                 hx-trigger="every 2s"
-                 hx-swap="innerHTML">
-                {{.Log}}
+            <div id="runs-list" class="flex-1 overflow-y-auto scrollbar-thin"
+                 hx-get="/partials/runs?ns={{.CurrentNS}}"
+                 hx-trigger="every 30s">
+                {{template "runs-list.html" .}}
             </div>
-        </div>
+        </aside>
 
-        <!-- History Panel -->
-        <div class="w-full lg:w-[420px] xl:w-[480px] flex flex-col bg-neutral-900 min-h-0 flex-1 lg:flex-none">
-            <div class="px-4 py-3 border-b border-neutral-800 flex items-center gap-2">
-                <svg class="w-4 h-4 text-neutral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                </svg>
-                <span class="text-sm text-neutral-400">Fix History</span>
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col min-w-0">
+            {{if .SelectedRun}}
+            <div id="run-detail" class="flex-1 overflow-y-auto">
+                {{template "run-detail.html" (dict "Run" .SelectedRun "Fixes" .SelectedFixes)}}
             </div>
-            <div id="fixes-container" class="flex-1 overflow-y-auto" hx-get="/fixes" hx-trigger="every 10s" hx-swap="innerHTML">
-                {{template "fixes-table.html" .}}
+            {{else}}
+            <div class="flex-1 flex items-center justify-center text-neutral-500">
+                <div class="text-center">
+                    <p class="text-lg mb-2">No runs yet</p>
+                    <p class="text-sm text-neutral-600">Watcher runs every 5 minutes</p>
+                </div>
             </div>
-        </div>
-    </main>
+            {{end}}
+
+            <!-- Live Log (collapsible) -->
+            <div class="border-t border-neutral-800">
+                <button onclick="toggleLog()" class="w-full px-4 py-2 flex items-center justify-between text-sm text-neutral-400 hover:bg-neutral-800/50">
+                    <span>Live Terminal</span>
+                    <svg id="log-chevron" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+                    </svg>
+                </button>
+                <div id="log-panel" class="hidden bg-neutral-950 border-t border-neutral-800">
+                    <div id="live-log"
+                         class="h-48 p-3 font-mono text-xs text-neutral-400 overflow-y-auto scrollbar-thin"
+                         hx-get="/partials/log"
+                         hx-trigger="every 3s"
+                         hx-swap="innerHTML">
+                        {{.Log}}
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
 
     <script>
-        const logContainer = document.getElementById('log-container');
-        new MutationObserver(() => {
-            logContainer.scrollTop = logContainer.scrollHeight;
-        }).observe(logContainer, { childList: true });
+        function toggleLog() {
+            const panel = document.getElementById('log-panel');
+            const chevron = document.getElementById('log-chevron');
+            panel.classList.toggle('hidden');
+            chevron.classList.toggle('rotate-180');
+        }
+
+        // Auto-scroll log
+        const logContainer = document.getElementById('live-log');
+        if (logContainer) {
+            new MutationObserver(() => {
+                logContainer.scrollTop = logContainer.scrollHeight;
+            }).observe(logContainer, { childList: true });
+        }
+
+        // Helper for templates
+        function dict(obj) { return obj; }
     </script>
 </body>
 </html>
