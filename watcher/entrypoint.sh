@@ -114,26 +114,45 @@ echo "=== Run #$RUN_ID Complete ===" | tee -a "$LOG_FILE"
 
 # === PARSE REPORT ===
 REPORT=""
-if grep -q "===REPORT_START===" "$OUTPUT_FILE"; then
+if grep -q "===REPORT_START===" "$OUTPUT_FILE" 2>/dev/null; then
     REPORT=$(sed -n '/===REPORT_START===/,/===REPORT_END===/p' "$OUTPUT_FILE" | grep -v "===REPORT" | tr -d '\n' | tr -s ' ')
     echo "Parsed report: $REPORT"
 fi
 
-# Extract values from report
+# Extract values from report with defaults
 POD_COUNT=0
 ERROR_COUNT=0
 FIX_COUNT=0
 STATUS="ok"
 
 if [ -n "$REPORT" ]; then
-    POD_COUNT=$(echo "$REPORT" | grep -o '"pod_count":[^,}]*' | cut -d':' -f2 | tr -d ' ' || echo "0")
-    ERROR_COUNT=$(echo "$REPORT" | grep -o '"error_count":[^,}]*' | cut -d':' -f2 | tr -d ' ' || echo "0")
-    FIX_COUNT=$(echo "$REPORT" | grep -o '"fix_count":[^,}]*' | cut -d':' -f2 | tr -d ' ' || echo "0")
-    STATUS=$(echo "$REPORT" | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "ok")
+    # Parse pod_count
+    PARSED=$(echo "$REPORT" | grep -o '"pod_count"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*$')
+    [ -n "$PARSED" ] && POD_COUNT=$PARSED
+
+    # Parse error_count
+    PARSED=$(echo "$REPORT" | grep -o '"error_count"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*$')
+    [ -n "$PARSED" ] && ERROR_COUNT=$PARSED
+
+    # Parse fix_count
+    PARSED=$(echo "$REPORT" | grep -o '"fix_count"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*$')
+    [ -n "$PARSED" ] && FIX_COUNT=$PARSED
+
+    # Parse status
+    PARSED=$(echo "$REPORT" | grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
+    [ -n "$PARSED" ] && STATUS=$PARSED
 fi
 
-# Read full log
-FULL_LOG=$(cat "$LOG_FILE" | sed "s/'/''/g")
+# Validate status is one of expected values
+case "$STATUS" in
+    ok|fixed|failed|issues_found|running) ;;
+    *) STATUS="ok" ;;
+esac
+
+echo "Final values: pods=$POD_COUNT errors=$ERROR_COUNT fixes=$FIX_COUNT status=$STATUS"
+
+# Read full log (limit size to prevent issues)
+FULL_LOG=$(head -c 100000 "$LOG_FILE" | sed "s/'/''/g")
 
 # Escape report for SQL
 REPORT_ESCAPED=$(echo "$REPORT" | sed "s/'/''/g")

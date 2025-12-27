@@ -47,7 +47,11 @@
                 </select>
                 <!-- Stats -->
                 {{if .Stats}}
-                <div class="hidden sm:flex items-center gap-3 text-sm">
+                <div id="header-stats"
+                     class="hidden sm:flex items-center gap-3 text-sm"
+                     hx-get="/partials/stats?ns={{.CurrentNS}}"
+                     hx-trigger="every 10s"
+                     hx-swap="innerHTML">
                     <span class="text-neutral-500">Runs</span>
                     <span class="font-mono">{{.Stats.RunCount}}</span>
                     <span class="text-neutral-600">|</span>
@@ -58,10 +62,6 @@
                     <span class="text-red-500">{{.Stats.FailedCount}} failed</span>
                 </div>
                 {{end}}
-                <div class="flex items-center gap-2 px-2 py-1 bg-emerald-500/10 rounded-full">
-                    <div class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                    <span class="text-emerald-500 text-xs font-medium hidden md:inline">Active</span>
-                </div>
             </div>
         </div>
     </header>

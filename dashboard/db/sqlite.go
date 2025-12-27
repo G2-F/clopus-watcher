@@ -193,7 +193,7 @@ func (db *DB) GetNamespaces() ([]NamespaceStats, error) {
 			COUNT(*) as run_count,
 			SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) as ok_count,
 			SUM(CASE WHEN status = 'fixed' THEN 1 ELSE 0 END) as fixed_count,
-			SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count
+			SUM(CASE WHEN status = 'failed' OR status = 'issues_found' THEN 1 ELSE 0 END) as failed_count
 		FROM runs
 		GROUP BY namespace
 		ORDER BY namespace
@@ -223,9 +223,12 @@ func (db *DB) GetNamespaceStats(namespace string) (*NamespaceStats, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Count 'ok' status as ok
 	db.conn.QueryRow(`SELECT COUNT(*) FROM runs WHERE namespace = ? AND status = 'ok'`, namespace).Scan(&s.OkCount)
+	// Count 'fixed' status as fixed
 	db.conn.QueryRow(`SELECT COUNT(*) FROM runs WHERE namespace = ? AND status = 'fixed'`, namespace).Scan(&s.FixedCount)
-	db.conn.QueryRow(`SELECT COUNT(*) FROM runs WHERE namespace = ? AND status = 'failed'`, namespace).Scan(&s.FailedCount)
+	// Count 'failed' and 'issues_found' as failed (issues that need attention)
+	db.conn.QueryRow(`SELECT COUNT(*) FROM runs WHERE namespace = ? AND (status = 'failed' OR status = 'issues_found')`, namespace).Scan(&s.FailedCount)
 
 	return &s, nil
 }
