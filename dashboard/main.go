@@ -138,6 +138,12 @@ func main() {
 	}
 	defer database.Close()
 
+	// Import any JSON results from watcher script into the database
+	resultsDir := "/tmp/clopus-watcher-runs"
+	if err := database.ImportJSONResults(resultsDir); err != nil {
+		log.Printf("Warning: Failed to import JSON results: %v", err)
+	}
+
 	// Template functions
 	funcMap := template.FuncMap{
 		"dict": func(values ...interface{}) map[string]interface{} {

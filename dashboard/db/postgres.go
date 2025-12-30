@@ -2,6 +2,11 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -104,12 +109,12 @@ func (db *DB) GetRuns(namespace string, limit int) ([]Run, error) {
 	argIdx := 1
 
 	if namespace != "" {
-		query += " WHERE namespace = $" + string(rune(argIdx))
+		query += fmt.Sprintf(" WHERE namespace = $%d", argIdx)
 		args = append(args, namespace)
 		argIdx++
 	}
 
-	query += " ORDER BY started_at DESC LIMIT $" + string(rune(argIdx))
+	query += fmt.Sprintf(" ORDER BY started_at DESC LIMIT $%d", argIdx)
 	args = append(args, limit)
 
 	rows, err := db.conn.Query(query, args...)
@@ -271,4 +276,67 @@ func (db *DB) GetStats() (total, success, failed, pending int, err error) {
 	}
 	err = db.conn.QueryRow("SELECT COUNT(*) FROM clopus_watcher_fixes WHERE status = 'pending' OR status = 'analyzing'").Scan(&pending)
 	return
+}
+
+// ImportJSONResults imports watcher results from JSON files to PostgreSQL
+// Scans resultsDir for run_*.json files and inserts them into the database
+func (db *DB) ImportJSONResults(resultsDir string) error {
+	files, err := filepath.Glob(filepath.Join(resultsDir, "run_*.json"))
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue // Skip files that can't be read
+		}
+
+		var result struct {
+			ID         int64  `json:"id"`
+			StartedAt  string `json:"started_at"`
+			EndedAt    string `json:"ended_at"`
+			Namespace  string `json:"namespace"`
+			Mode       string `json:"mode"`
+			Status     string `json:"status"`
+			PodCount   int    `json:"pod_count"`
+			ErrorCount int    `json:"error_count"`
+			FixCount   int    `json:"fix_count"`
+			Report     string `json:"report"`
+			Log        string `json:"log"`
+		}
+
+		if err := json.Unmarshal(data, &result); err != nil {
+			continue // Skip invalid JSON files
+		}
+
+		// Check if run already exists
+		var exists bool
+		err = db.conn.QueryRow("SELECT EXISTS(SELECT 1 FROM clopus_watcher_runs WHERE id = $1)", result.ID).Scan(&exists)
+		if err != nil || exists {
+			continue // Skip if already imported
+		}
+
+		// Parse timestamps
+		startedAt := result.StartedAt
+		if startedAt == "" {
+			startedAt = time.Now().Format(time.RFC3339)
+		}
+		endedAt := result.EndedAt
+		if endedAt == "" {
+			endedAt = time.Now().Format(time.RFC3339)
+		}
+
+		// Insert run record
+		_, err = db.conn.Exec(`
+			INSERT INTO clopus_watcher_runs (id, started_at, ended_at, namespace, mode, status, pod_count, error_count, fix_count, report, log)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`, result.ID, startedAt, endedAt, result.Namespace, result.Mode, result.Status, result.PodCount, result.ErrorCount, result.FixCount, result.Report, result.Log)
+
+		if err != nil {
+			continue // Skip files that fail to import
+		}
+	}
+
+	return nil
 }
