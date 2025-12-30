@@ -118,6 +118,15 @@ func main() {
 		log.Fatalf("DATABASE_URL environment variable not set - required for PostgreSQL connection")
 	}
 
+	// Add SSL mode for local development (disable SSL for Docker/local postgres)
+	if !strings.Contains(databaseURL, "sslmode") {
+		if strings.Contains(databaseURL, "?") {
+			databaseURL += "&sslmode=disable"
+		} else {
+			databaseURL += "?sslmode=disable"
+		}
+	}
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -151,6 +160,11 @@ func main() {
 	tmpl, err = tmpl.ParseGlob("templates/partials/*.html")
 	if err != nil {
 		log.Fatalf("Failed to parse partials: %v", err)
+	}
+
+	logPath := os.Getenv("LOG_PATH")
+	if logPath == "" {
+		logPath = "/tmp/clopus-watcher.log"
 	}
 
 	h := handlers.New(database, tmpl, logPath)

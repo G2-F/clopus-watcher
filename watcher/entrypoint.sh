@@ -3,7 +3,7 @@ set -e
 
 echo "=== Clopus Watcher Starting ==="
 echo "Target namespace: $TARGET_NAMESPACE"
-echo "SQLite path: $SQLITE_PATH"
+echo "Results directory: /tmp/clopus-watcher-runs"
 
 # === WATCHER MODE ===
 WATCHER_MODE="${WATCHER_MODE:-autonomous}"
@@ -35,58 +35,52 @@ else
     exit 1
 fi
 
-# === DATABASE SETUP ===
-# Ensure tables exist
-sqlite3 "$SQLITE_PATH" "CREATE TABLE IF NOT EXISTS runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    started_at TEXT NOT NULL,
-    ended_at TEXT,
-    namespace TEXT NOT NULL,
-    mode TEXT NOT NULL DEFAULT 'autonomous',
-    status TEXT NOT NULL DEFAULT 'running',
-    pod_count INTEGER DEFAULT 0,
-    error_count INTEGER DEFAULT 0,
-    fix_count INTEGER DEFAULT 0,
-    report TEXT,
-    log TEXT
-);"
-
-sqlite3 "$SQLITE_PATH" "CREATE TABLE IF NOT EXISTS fixes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id INTEGER,
-    timestamp TEXT NOT NULL,
-    namespace TEXT NOT NULL,
-    pod_name TEXT NOT NULL,
-    error_type TEXT NOT NULL,
-    error_message TEXT,
-    fix_applied TEXT,
-    status TEXT DEFAULT 'pending',
-    FOREIGN KEY (run_id) REFERENCES runs(id)
-);"
-
-# Add run_id column if missing (migration)
-sqlite3 "$SQLITE_PATH" "ALTER TABLE fixes ADD COLUMN run_id INTEGER;" 2>/dev/null || true
-
-echo "Database initialized"
-
-# === CREATE RUN RECORD ===
-RUN_ID=$(sqlite3 "$SQLITE_PATH" "INSERT INTO runs (started_at, namespace, mode, status) VALUES (datetime('now'), '$TARGET_NAMESPACE', '$WATCHER_MODE', 'running'); SELECT last_insert_rowid();")
-echo "Created run #$RUN_ID"
+# === GENERATE RUN ID ===
+# For local development, generate a simple run ID (timestamp-based)
+# In production with psql, this would be database-generated
+RUN_ID=$(date +%s)
+echo "Created run #$RUN_ID ($(date -Iseconds))"
 
 # === GET LAST RUN TIME ===
-LAST_RUN_TIME=$(sqlite3 "$SQLITE_PATH" "SELECT COALESCE(MAX(ended_at), '') FROM runs WHERE namespace = '$TARGET_NAMESPACE' AND status != 'running' AND id != $RUN_ID;")
-echo "Last run time: ${LAST_RUN_TIME:-'(first run)'}"
+# For local development, check if we have a previous run record file
+RESULTS_DIR="${RESULTS_DIR:-/tmp/clopus-watcher-runs}"
+mkdir -p "$RESULTS_DIR"
+
+LAST_RUN_FILE=$(ls -t "$RESULTS_DIR"/*.json 2>/dev/null | head -1)
+if [ -n "$LAST_RUN_FILE" ]; then
+    LAST_RUN_TIME=$(stat -f %Sm -t %Y-%m-%dT%H:%M:%SZ "$LAST_RUN_FILE" 2>/dev/null || stat -c %y "$LAST_RUN_FILE" 2>/dev/null | cut -d' ' -f1-2 | tr ' ' T)
+    echo "Last run time: $LAST_RUN_TIME"
+else
+    LAST_RUN_TIME=""
+    echo "Last run time: (first run)"
+fi
 
 # === SELECT PROMPT ===
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 if [ "$WATCHER_MODE" = "report" ]; then
-    PROMPT_FILE="/app/master-prompt-report.md"
+    PROMPT_FILE="$SCRIPT_DIR/master-prompt-report.md"
 else
-    PROMPT_FILE="/app/master-prompt-autonomous.md"
+    PROMPT_FILE="$SCRIPT_DIR/master-prompt-autonomous.md"
 fi
 
 if [ ! -f "$PROMPT_FILE" ]; then
     echo "ERROR: Prompt file not found: $PROMPT_FILE"
-    sqlite3 "$SQLITE_PATH" "UPDATE runs SET ended_at = datetime('now'), status = 'failed', report = 'Prompt file not found' WHERE id = $RUN_ID;"
+    cat > "$RESULTS_DIR/run_${RUN_ID}.json" <<EOF
+{
+  "id": $RUN_ID,
+  "started_at": "$(date -Iseconds)",
+  "ended_at": "$(date -Iseconds)",
+  "namespace": "$TARGET_NAMESPACE",
+  "mode": "$WATCHER_MODE",
+  "status": "failed",
+  "pod_count": 0,
+  "error_count": 0,
+  "fix_count": 0,
+  "report": "Prompt file not found",
+  "log": "ERROR: Prompt file not found at $PROMPT_FILE"
+}
+EOF
     exit 1
 fi
 
@@ -94,14 +88,15 @@ PROMPT=$(cat "$PROMPT_FILE")
 
 # Replace environment variables in prompt
 PROMPT=$(echo "$PROMPT" | sed "s|\$TARGET_NAMESPACE|$TARGET_NAMESPACE|g")
-PROMPT=$(echo "$PROMPT" | sed "s|\$SQLITE_PATH|$SQLITE_PATH|g")
+PROMPT=$(echo "$PROMPT" | sed "s|\$DATABASE_URL|$DATABASE_URL|g")
 PROMPT=$(echo "$PROMPT" | sed "s|\$RUN_ID|$RUN_ID|g")
 PROMPT=$(echo "$PROMPT" | sed "s|\$LAST_RUN_TIME|$LAST_RUN_TIME|g")
 
 # === RUN CLAUDE ===
 echo "Starting Claude Code..."
 
-LOG_FILE="/data/watcher.log"
+# Use results directory for logs
+LOG_FILE="$RESULTS_DIR/run_${RUN_ID}.log"
 echo "=== Run #$RUN_ID started at $(date -Iseconds) ===" > "$LOG_FILE"
 echo "Mode: $WATCHER_MODE | Namespace: $TARGET_NAMESPACE" >> "$LOG_FILE"
 echo "----------------------------------------" >> "$LOG_FILE"
@@ -152,23 +147,29 @@ esac
 echo "Final values: pods=$POD_COUNT errors=$ERROR_COUNT fixes=$FIX_COUNT status=$STATUS"
 
 # Read full log (limit size to prevent issues)
-FULL_LOG=$(head -c 100000 "$LOG_FILE" | sed "s/'/''/g")
+FULL_LOG=$(head -c 100000 "$LOG_FILE")
 
-# Escape report for SQL
-REPORT_ESCAPED=$(echo "$REPORT" | sed "s/'/''/g")
-
-# === UPDATE RUN RECORD ===
-sqlite3 "$SQLITE_PATH" "UPDATE runs SET
-    ended_at = datetime('now'),
-    status = '$STATUS',
-    pod_count = $POD_COUNT,
-    error_count = $ERROR_COUNT,
-    fix_count = $FIX_COUNT,
-    report = '$REPORT_ESCAPED',
-    log = '$FULL_LOG'
-WHERE id = $RUN_ID;"
+# === SAVE RUN RESULT TO FILE ===
+# For local development, save as JSON file
+# These results will be periodically imported to the database by the dashboard
+cat > "$RESULTS_DIR/run_${RUN_ID}.json" <<EOF
+{
+  "id": $RUN_ID,
+  "started_at": "$(date -d @$RUN_ID -Iseconds 2>/dev/null || date -Iseconds)",
+  "ended_at": "$(date -Iseconds)",
+  "namespace": "$TARGET_NAMESPACE",
+  "mode": "$WATCHER_MODE",
+  "status": "$STATUS",
+  "pod_count": $POD_COUNT,
+  "error_count": $ERROR_COUNT,
+  "fix_count": $FIX_COUNT,
+  "report": "$(echo "$REPORT" | sed 's/"/\\"/g')",
+  "log": "$(echo "$FULL_LOG" | sed 's/"/\\"/g' | head -c 50000)"
+}
+EOF
 
 echo "Run #$RUN_ID completed with status: $STATUS"
+echo "Result saved to: $RESULTS_DIR/run_${RUN_ID}.json"
 
 # Cleanup
 rm -f "$OUTPUT_FILE"
